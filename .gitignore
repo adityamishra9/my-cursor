@@ -1,5 +1,6 @@
 client/out/
 client/node_modules/
+/client/package-lock.json/
 *.vsix
 .DS_Store
 

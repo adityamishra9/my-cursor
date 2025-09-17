@@ -14,16 +14,16 @@ const DEFAULT_MODELS: Record<string, string> = {
 function getCfg() {
   const cfg = vscode.workspace.getConfiguration("myCursor");
   const rawProvider = (cfg.get<string>("provider", "gemini") || "gemini").toLowerCase();
-  const provider = PROVIDERS.has(rawProvider as any) ? rawProvider : "gemini";
+  const provider = (new Set(["gemini","openai","anthropic"]) as Set<string>).has(rawProvider) ? rawProvider : "gemini";
 
   const modelSetting = cfg.get<string>("model", "") || "";
-  const model = (modelSetting.trim() || DEFAULT_MODELS[provider]) as string;
+  const model = (modelSetting.trim() || (provider === "openai" ? "gpt-4o" : provider === "anthropic" ? "claude-3-5-sonnet-20240620" : "gemini-2.0-flash"));
 
   return {
     provider,
     model,
     temperature: cfg.get<number>("temperature", 0.2),
-    apiProxyUrl: cfg.get<string>("apiProxyUrl", "") || "",
+    apiProxyUrl: cfg.get<string>("apiProxyUrl", "https://cursor.adityamishra.tech/api/generate"),
     embeddedKey: cfg.get<string>("embeddedApiKey", "") || ""
   };
 }
