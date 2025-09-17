@@ -1,13 +1,14 @@
 {
   "name": "my-cursor",
   "displayName": "My Cursor",
-  "description": "Turn natural language into safe, reviewable workspace changes via Gemini: plan → preview → execute.",
+  "description": "Turn natural language into safe, reviewable workspace changes via your proxy-controlled LLM (Gemini/OpenAI/Anthropic): plan → preview → execute.",
   "version": "1.0.0",
   "publisher": "your-publisher-id",
-  "engines": {
-    "vscode": "^1.104.0"
-  },
+  "icon": "icon.png",
+  "license": "MIT",
+  "engines": { "vscode": "^1.104.0" },
   "categories": ["Other"],
+  "extensionKind": ["workspace"],
   "activationEvents": [
     "onCommand:my-cursor.plan",
     "onCommand:my-cursor.configure",
@@ -27,10 +28,16 @@
     "configuration": {
       "title": "My Cursor",
       "properties": {
+        "myCursor.provider": {
+          "type": "string",
+          "default": "gemini",
+          "enum": ["gemini", "openai", "anthropic"],
+          "description": "Which provider to route via your proxy."
+        },
         "myCursor.model": {
           "type": "string",
           "default": "gemini-2.0-flash",
-          "description": "Gemini model name."
+          "description": "Provider-specific model id."
         },
         "myCursor.temperature": {
           "type": "number",
@@ -79,12 +86,7 @@
         "myCursor.embeddedApiKey": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Optional: An API key embedded via settings. **Do NOT publish with a real key.** Prefer a proxy server."
-        },
-        "myCursor.apiProxyUrl": {
-          "type": "string",
-          "default": "",
-          "description": "Optional HTTPS proxy endpoint that fronts the Gemini API using your server-side key."
+          "markdownDescription": "DEV ONLY fallback when no proxy is set. **Do NOT publish with a real key.**"
         }
       }
     }

@@ -18,7 +18,7 @@ const PROVIDERS = {
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`
   },
   openai: {
-    keyEnv: "OPENAI_API_KEY",
+    keyEnv: "OPENAI_API_KEY || sk-abcdef1234567890abcdef1234567890abcdef12",
     endpoint: () => "https://api.openai.com/v1/chat/completions"
   },
   anthropic: {
