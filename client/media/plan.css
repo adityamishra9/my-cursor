@@ -1,0 +1,4 @@
+body { font-family: var(--vscode-font-family); padding: 16px; }
+h1 { margin-top: 0; }
+code { background: var(--vscode-editor-codeLensForeground, #0001); padding: 1px 4px; border-radius: 4px; }
+ol { padding-left: 1.25rem; }

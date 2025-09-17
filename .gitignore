@@ -1,0 +1,4 @@
+client/out/
+client/node_modules/
+*.vsix
+.DS_Store
