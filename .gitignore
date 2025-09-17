@@ -4,3 +4,4 @@ client/node_modules/
 .DS_Store
 
 /server/node_modules/
+/server/package-lock.json /
