@@ -14,7 +14,7 @@ type Result =
 function getCfg() {
   const cfg = vscode.workspace.getConfiguration("myCursor");
   return {
-    dryRun: cfg.get<boolean>("dryRun", true),
+    // dryRun removed — extension always executes actions now
     allowShell: cfg.get<boolean>("allowShell", false),
     allowInstall: cfg.get<boolean>("allowInstall", false),
     openFilesAfterWrite: cfg.get<boolean>("openFilesAfterWrite", true),
@@ -37,16 +37,8 @@ export async function executePlan(
   const results: Result[] = [];
   const toOpen: vscode.Uri[] = [];
 
-  if (cfg.dryRun) {
-    output.appendLine(
-      "DRY RUN: No changes will be written. Use “My Cursor: Toggle Dry Run” to allow execution."
-    );
-  }
-
-  // trust gate
-  if (!cfg.dryRun) {
-    requireTrustedWorkspace();
-  }
+  // Always enforce trust since we modify files / may run shell
+  requireTrustedWorkspace();
 
   const ensureDir = async (dirUri: vscode.Uri) => {
     try {
@@ -56,33 +48,23 @@ export async function executePlan(
 
   const safeWrite = async (relPath: string, content: string) => {
     const uri = withinWorkspace(root, relPath);
-    if (!cfg.dryRun) {
-      await ensureDir(vscode.Uri.file(path.dirname(uri.fsPath)));
-      await vscode.workspace.fs.writeFile(
-        uri,
-        Buffer.from(content ?? "", "utf8")
-      );
-      if (cfg.openFilesAfterWrite && toOpen.length < cfg.maxFilesToOpen) {
-        toOpen.push(uri);
-      }
+    await ensureDir(vscode.Uri.file(path.dirname(uri.fsPath)));
+    await vscode.workspace.fs.writeFile(uri, Buffer.from(content ?? "", "utf8"));
+    if (cfg.openFilesAfterWrite && toOpen.length < cfg.maxFilesToOpen) {
+      toOpen.push(uri);
     }
   };
 
   const safeAppend = async (relPath: string, content: string) => {
     const uri = withinWorkspace(root, relPath);
-    if (!cfg.dryRun) {
-      await ensureDir(vscode.Uri.file(path.dirname(uri.fsPath)));
-      let old = "";
-      try {
-        old = await readFile(uri);
-      } catch {}
-      await vscode.workspace.fs.writeFile(
-        uri,
-        Buffer.from(old + (content ?? ""), "utf8")
-      );
-      if (cfg.openFilesAfterWrite && toOpen.length < cfg.maxFilesToOpen) {
-        toOpen.push(uri);
-      }
+    await ensureDir(vscode.Uri.file(path.dirname(uri.fsPath)));
+    let old = "";
+    try {
+      old = await readFile(uri);
+    } catch {}
+    await vscode.workspace.fs.writeFile(uri, Buffer.from(old + (content ?? ""), "utf8"));
+    if (cfg.openFilesAfterWrite && toOpen.length < cfg.maxFilesToOpen) {
+      toOpen.push(uri);
     }
   };
 
@@ -105,39 +87,38 @@ export async function executePlan(
     } else {
       out = data.split(find).join(replace ?? "");
     }
-    if (!cfg.dryRun) {
-      await vscode.workspace.fs.writeFile(uri, Buffer.from(out, "utf8"));
-      if (cfg.openFilesAfterWrite && toOpen.length < cfg.maxFilesToOpen) {
-        toOpen.push(uri);
-      }
+    await vscode.workspace.fs.writeFile(uri, Buffer.from(out, "utf8"));
+    if (cfg.openFilesAfterWrite && toOpen.length < cfg.maxFilesToOpen) {
+      toOpen.push(uri);
     }
   };
 
   const runShell = async (cmd: string, cwdRel = ".") => {
-    if (!cfg.allowShell)
+    if (!cfg.allowShell) {
       throw new Error(
         "Shell execution is disabled in settings (myCursor.allowShell=false)."
       );
+    }
     const cwdUri = withinWorkspace(root, cwdRel);
-    const { stdout, stderr } = cfg.dryRun
-      ? { stdout: "", stderr: "" }
-      : await exec(cmd, {
-          cwd: cwdUri.fsPath,
-          env: process.env,
-          shell: process.platform === "win32" ? "cmd.exe" : "/bin/bash",
-          windowsHide: true,
-          maxBuffer: 10 * 1024 * 1024,
-        });
+    const { stdout, stderr } = await exec(cmd, {
+      cwd: cwdUri.fsPath,
+      env: process.env,
+      shell: process.platform === "win32" ? "cmd.exe" : "/bin/bash",
+      windowsHide: true,
+      maxBuffer: 10 * 1024 * 1024,
+    });
     return { stdout, stderr };
   };
 
   const installPkgs = async (pkgs: string[], dev = false, cwdRel = ".") => {
-    if (!cfg.allowInstall)
+    if (!cfg.allowInstall) {
       throw new Error(
         "Package installation is disabled (myCursor.allowInstall=false)."
       );
-    if (!Array.isArray(pkgs) || pkgs.length === 0)
+    }
+    if (!Array.isArray(pkgs) || pkgs.length === 0) {
       return { stdout: "", stderr: "" };
+    }
     const flag = dev ? "-D" : "";
     return runShell(
       `npm i ${flag} ${pkgs.map((p) => JSON.stringify(p)).join(" ")}`,
@@ -151,8 +132,7 @@ export async function executePlan(
     try {
       switch (step.action) {
         case "mkdir":
-          if (!cfg.dryRun)
-            await ensureDir(withinWorkspace(root, step.path || "."));
+          await ensureDir(withinWorkspace(root, step.path || "."));
           results.push({ step: tag, ok: true });
           break;
         case "write":
@@ -167,8 +147,9 @@ export async function executePlan(
           break;
         case "edit":
           if (!step.path) throw new Error("edit: missing path");
-          if (typeof step.find !== "string")
+          if (typeof step.find !== "string") {
             throw new Error("edit: find must be string (text or /regex/flags)");
+          }
           await safeEdit(step.path, step.find, step.replace ?? "");
           results.push({ step: tag, ok: true });
           break;

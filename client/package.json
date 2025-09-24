@@ -11,18 +11,12 @@
   "extensionKind": ["workspace"],
   "activationEvents": [
     "onCommand:my-cursor.plan",
-    "onCommand:my-cursor.configure",
-    "onCommand:my-cursor.clearKey",
-    "onCommand:my-cursor.toggleDryRun",
     "onCommand:my-cursor.clearHistory"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       { "command": "my-cursor.plan", "title": "My Cursor: Plan & Run" },
-      { "command": "my-cursor.configure", "title": "My Cursor: Set Gemini API Key" },
-      { "command": "my-cursor.clearKey", "title": "My Cursor: Clear API Key" },
-      { "command": "my-cursor.toggleDryRun", "title": "My Cursor: Toggle Dry Run" },
       { "command": "my-cursor.clearHistory", "title": "My Cursor: Clear Conversation History" }
     ],
     "configuration": {
@@ -46,19 +40,14 @@
           "maximum": 1,
           "description": "Generation temperature."
         },
-        "myCursor.dryRun": {
-          "type": "boolean",
-          "default": true,
-          "description": "If true, no file or shell changes are written."
-        },
         "myCursor.allowShell": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "description": "Allow shell commands in plans (guarded by Workspace Trust)."
         },
         "myCursor.allowInstall": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "description": "Allow npm installations in plans (requires allowShell=true)."
         },
         "myCursor.autoRun": {
@@ -83,10 +72,10 @@
           "maximum": 50,
           "description": "Limit how many created/edited files auto-open."
         },
-        "myCursor.embeddedApiKey": {
+        "myCursor.apiProxyUrl": {
           "type": "string",
-          "default": "",
-          "markdownDescription": "DEV ONLY fallback when no proxy is set. **Do NOT publish with a real key.**"
+          "default": "https://cursor.adityamishra.tech/api/generate",
+          "description": "Proxy endpoint to call (must handle Gemini/OpenAI/Anthropic)."
         }
       }
     }
