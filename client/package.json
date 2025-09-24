@@ -6,9 +6,15 @@
   "publisher": "your-publisher-id",
   "icon": "icon.png",
   "license": "MIT",
-  "engines": { "vscode": "^1.104.0" },
-  "categories": ["Other"],
-  "extensionKind": ["workspace"],
+  "engines": {
+    "vscode": "^1.104.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
   "activationEvents": [
     "onCommand:my-cursor.plan",
     "onCommand:my-cursor.clearHistory"
@@ -16,8 +22,18 @@
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
-      { "command": "my-cursor.plan", "title": "My Cursor: Plan & Run" },
-      { "command": "my-cursor.clearHistory", "title": "My Cursor: Clear Conversation History" }
+      {
+        "command": "my-cursor.plan",
+        "title": "My Cursor: Plan & Run"
+      },
+      {
+        "command": "my-cursor.clearHistory",
+        "title": "My Cursor: Clear Conversation History"
+      },
+      {
+        "command": "my-cursor.repairLast",
+        "title": "My Cursor: Repair Last Failure"
+      }
     ],
     "configuration": {
       "title": "My Cursor",
@@ -25,7 +41,11 @@
         "myCursor.provider": {
           "type": "string",
           "default": "gemini",
-          "enum": ["gemini", "openai", "anthropic"],
+          "enum": [
+            "gemini",
+            "openai",
+            "anthropic"
+          ],
           "description": "Which provider to route via your proxy."
         },
         "myCursor.model": {
@@ -76,6 +96,18 @@
           "type": "string",
           "default": "https://cursor.adityamishra.tech/api/generate",
           "description": "Proxy endpoint to call (must handle Gemini/OpenAI/Anthropic)."
+        },
+        "myCursor.autoRepair": {
+          "type": "boolean",
+          "default": true,
+          "description": "After a failed run, ask the LLM for a targeted repair plan."
+        },
+        "myCursor.maxRepairAttempts": {
+          "type": "number",
+          "default": 2,
+          "minimum": 0,
+          "maximum": 5,
+          "description": "Max consecutive repair plans to attempt automatically."
         }
       }
     }

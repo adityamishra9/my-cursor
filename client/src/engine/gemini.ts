@@ -34,14 +34,14 @@ function getCfg() {
   };
 }
 
-/** ---- System Prompt (strict plan schema) ---- */
+/** ---- System Prompts ---- */
 const SYSTEM_PROMPT = `
 You are a precise project-automation planner for a VS Code workspace.
 You NEVER output anything except a single JSON object matching this schema:
 
 {
   "goal": "string (one-line summary of what you'll do)",
-  "root": "string (relative path under the workspace where changes occur, e.g. \\".\\", \\"my-app\\")",
+  "root": "string (relative path under the workspace where changes occur, e.g. \".\", \"my-app\")",
   "steps": [
     {"action":"mkdir","path":"relative/dir/path"},
     {"action":"write","path":"relative/file","content":"full file content"},
@@ -58,6 +58,19 @@ Rules:
 - For JS/TS/Next/Tailwind projects, include a working package.json if you don't run a framework init.
 - If unsure, choose sane defaults and produce a runnable app.
 - Do NOT include explanations, markdown, or backticks — ONLY raw JSON.
+`.trim();
+
+const REPAIR_SYSTEM_PROMPT = `
+You are generating a TARGETED REPAIR PLAN to fix failures from a previous attempt.
+Output ONLY a single JSON object of the same schema as above.
+
+Constraints:
+- Focus ONLY on steps required to resolve the reported failures.
+- Avoid repeating successful steps unless necessary (e.g., idempotent edits/writes with guards).
+- Respect workspace trust and safety; all paths must remain within the workspace.
+- If a file to edit may not exist, ensure you create it first (write) or guard the edit accordingly.
+- Keep the plan minimal and ordered so it can be applied immediately.
+- No prose, markdown, or comments — ONLY the JSON object.
 `.trim();
 
 /** ---- Utilities ---- */
@@ -84,11 +97,12 @@ function normalizePlan(p: any): Plan {
 }
 
 function buildMessages(
+  system: string,
   userRequest: string,
-  history: { role: "user" | "model"; text: string }[]
+  history: { role: "user" | "model"; text: string }[],
 ) {
   const msgs: Array<{ role: "system" | "user" | "assistant"; content: string }> = [];
-  msgs.push({ role: "system", content: SYSTEM_PROMPT });
+  msgs.push({ role: "system", content: system });
   for (const m of history) {
     msgs.push({
       role: m.role === "model" ? "assistant" : "user",
@@ -106,27 +120,47 @@ export async function generatePlan(
   history: { role: "user" | "model"; text: string }[]
 ): Promise<Plan> {
   const { provider, model, temperature, apiProxyUrl } = getCfg();
-  const messages = buildMessages(userRequest, history);
+  const messages = buildMessages(SYSTEM_PROMPT, userRequest, history);
 
   if (!apiProxyUrl?.trim()) {
     throw new Error("Missing proxy URL. Set `myCursor.apiProxyUrl` in settings.");
   }
 
-  // Primary path: your proxy. If non-gemini fails, auto-fallback to gemini once.
   const firstTry = await callProxy(apiProxyUrl, provider, model, temperature, messages);
   if (firstTry.ok) return parsePlanText(firstTry.output);
 
   if (provider !== "gemini") {
-    const fallback = await callProxy(
-      apiProxyUrl,
-      "gemini",
-      DEFAULT_MODELS.gemini,
-      temperature,
-      messages
-    );
+    const fallback = await callProxy(apiProxyUrl, "gemini", DEFAULT_MODELS.gemini, temperature, messages);
     if (fallback.ok) return parsePlanText(fallback.output);
   }
   throw new Error(firstTry.error || "Proxy call failed.");
+}
+
+/**
+ * Ask the model for a targeted repair plan.
+ * @param failureBrief A compact text containing failed steps + errors.
+ * @param contextBrief Extra context: prior goal, root, partial file tree, etc.
+ */
+export async function generateRepairPlan(
+  _context: vscode.ExtensionContext,
+  failureBrief: string,
+  contextBrief: string,
+  history: { role: "user" | "model"; text: string }[]
+): Promise<Plan> {
+  const { provider, model, temperature, apiProxyUrl } = getCfg();
+  const userMsg =
+    `Previous attempt failed. Please produce a MINIMAL repair plan as per schema.\n\n` +
+    `--- Failures ---\n${failureBrief}\n\n--- Context ---\n${contextBrief}`;
+  const messages = buildMessages(REPAIR_SYSTEM_PROMPT, userMsg, history);
+
+  const firstTry = await callProxy(apiProxyUrl, provider, model, temperature, messages);
+  if (firstTry.ok) return parsePlanText(firstTry.output);
+
+  if (provider !== "gemini") {
+    const fallback = await callProxy(apiProxyUrl, "gemini", DEFAULT_MODELS.gemini, temperature, messages);
+    if (fallback.ok) return parsePlanText(fallback.output);
+  }
+  throw new Error(firstTry.error || "Proxy call (repair) failed.");
 }
 
 /** ---- Proxy call helper ---- */
