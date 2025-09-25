@@ -3,9 +3,17 @@
   "displayName": "My Cursor",
   "description": "Turn natural language into safe, reviewable workspace changes via your proxy-controlled LLM (Gemini/OpenAI/Anthropic): plan → preview → execute.",
   "version": "1.0.0",
-  "publisher": "your-publisher-id",
+  "publisher": "adityamishra9",
   "icon": "icon.png",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/adityamishra9/my-cursor"
+  },
+  "bugs": {
+    "url": "https://github.com/adityamishra9/my-cursor/issues"
+  },
+  "homepage": "https://github.com/adityamishra9/my-cursor#readme",
   "engines": {
     "vscode": "^1.104.0"
   },
