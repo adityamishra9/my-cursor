@@ -1,10 +1,10 @@
 {
-  "name": "my-cursor",
-  "displayName": "My Cursor",
-  "description": "Turn natural language into safe, reviewable workspace changes via your proxy-controlled LLM (Gemini/OpenAI/Anthropic): plan → preview → execute.",
+  "name": "myy-cursor",
+  "displayName": "Myy Cursor",
+  "description": "Turn natural language into safe, reviewable workspace changes via your proxy-controlled LLM (Gemini / OpenAI / Anthropic): plan → preview → execute.",
   "version": "1.0.0",
   "publisher": "adityamishra9",
-  "icon": "icon.png",
+  "icon": "media/icon.png",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -18,14 +18,27 @@
     "vscode": "^1.104.0"
   },
   "categories": [
-    "Other"
+    "Other",
+    "Programming Languages",
+    "Debuggers"
+  ],
+  "keywords": [
+    "ai",
+    "llm",
+    "gemini",
+    "openai",
+    "anthropic",
+    "automation",
+    "codegen",
+    "cursor"
   ],
   "extensionKind": [
     "workspace"
   ],
   "activationEvents": [
     "onCommand:my-cursor.plan",
-    "onCommand:my-cursor.clearHistory"
+    "onCommand:my-cursor.clearHistory",
+    "onCommand:my-cursor.repairLast"
   ],
   "main": "./out/extension.js",
   "contributes": {
