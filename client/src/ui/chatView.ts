@@ -15,7 +15,10 @@ export type ChatFromWeb =
   | { type: "clear-history" }
   | { type: "run" }
   | { type: "repair" }
-  | { type: "open-settings" };
+  | { type: "open-settings" }
+  // Host-handled plan actions:
+  | { type: "run-plan"; plan: any }
+  | { type: "revert-plan"; plan: any };
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewId = "my-cursor.chat";
@@ -104,6 +107,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     --bubble-user: var(--vscode-input-background);
     --bubble-model: var(--vscode-editorWidget-background);
     --card-bg: var(--vscode-editorWidget-background);
+    --accent: var(--vscode-textLink-foreground);
   }
   html,body{height:100%}
   body{
@@ -112,7 +116,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     display:grid; grid-template-rows:auto 1fr auto;
   }
 
-  /* Top bar — centered actions, no title */
+  /* Top bar — centered actions, with icons */
   .topbar{
     display:flex; align-items:center; justify-content:center; gap:8px;
     padding:8px 10px; border-bottom:1px solid var(--border);
@@ -121,7 +125,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     background:var(--btn); color:var(--btn-fg);
     border:none; border-radius:8px; padding:6px 10px; cursor:pointer;
     font-size:12px;
+    display:flex; align-items:center; gap:6px;
   }
+  .btn .icon{ font-size:13px; line-height:1; }
   .btn:hover{ background:var(--btn-hover); }
   .btn[disabled]{ opacity:.6; cursor:not-allowed; }
 
@@ -129,33 +135,38 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   .scroll{ overflow:auto; padding:10px; }
   .thread{ max-width: 980px; margin: 0 auto; display:flex; flex-direction:column; gap:8px; }
 
-  /* Compact info/status card */
+  /* Extra-compact info/status card */
   .info{
     align-self:center;
     max-width: 92%;
     background: var(--card-bg);
     border: 1px dashed var(--border);
     border-radius: 10px;
-    padding: 8px 10px;          /* reduced padding */
+    padding: 6px 8px;
     color: var(--text);
     opacity: 0.95;
-    font-size: 12px;            /* smaller font */
-    line-height: 1.45;
-    white-space: pre-wrap;      /* preserve newlines, wrap long lines */
+    font-size: 11.5px;          /* smaller than bubbles */
+    line-height: 1.35;
+    white-space: pre-wrap;
     word-break: break-word;
   }
-  .info strong{ font-weight: 600; }
+  .info .note{
+    display:block;
+    margin-top:4px;
+    font-size: 10.5px;          /* smallest font for notes */
+    opacity: 0.85;
+  }
 
-  /* Bubbles (compact) */
+  /* Bubbles (no tails) */
   .row{ display:flex; }
   .bubble{
     max-width: 82%;
-    padding: 8px 10px;          /* reduced padding */
+    padding: 8px 10px;
     border-radius: var(--radius);
     border: 1px solid var(--border);
     box-shadow: var(--shadow);
-    line-height: 1.45;          /* slightly tighter */
-    font-size: 12.5px;          /* slightly smaller text */
+    line-height: 1.45;
+    font-size: 12.5px;
     white-space: pre-wrap;
     word-break: break-word;
   }
@@ -172,35 +183,63 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     border-top-right-radius: 6px;
   }
 
-  /* Card (for formatted plan JSON etc.) — compact */
+  /* Plan card (formatted JSON) with standard header actions */
   .card{
     max-width: 82%;
     background: var(--card-bg);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     box-shadow: var(--shadow);
-    padding: 8px 10px;          /* reduced padding */
+    padding: 8px 10px;
     font-size: 12.5px;
     line-height: 1.45;
   }
   .card.model { align-self: flex-start; }
   .card.user { align-self: flex-end; }
-  .card-title{ font-weight:600; margin-bottom:6px; font-size:12.5px; }
+
+  .card-head{
+    display:flex;
+    align-items:center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom:6px;
+  }
+  .card-title{ font-weight:600; font-size:12.5px; }
+
+  .card-actions{
+    display:flex;
+    align-items:center;
+    gap:6px;
+  }
+  .icon-btn{
+    height: 24px;
+    min-width: 24px;
+    padding: 0 8px;
+    display:flex; align-items:center; justify-content:center;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+  }
+  .icon-btn:hover{ border-color: var(--focus); color: var(--accent); }
 
   /* Code block — wrap long content vertically, no horizontal scroll */
   pre.code{
     margin:0;
-    padding:8px 10px;           /* reduced padding */
+    padding:8px 10px;
     border-radius: 8px;
     border:1px solid var(--border);
     background: var(--vscode-editor-background);
-    overflow-y: auto;           /* vertical scroll only when needed */
+    overflow-y: auto;
     overflow-x: hidden;         /* prevent horizontal scroll */
     max-height: 340px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
     font-size: 12px;
     line-height: 1.5;
-    white-space: pre-wrap;      /* <-- wrap long strings */
+    white-space: pre-wrap;      /* wrap long strings */
     word-break: break-word;     /* break long tokens */
   }
 
@@ -229,20 +268,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     display:block; width:100%;
     background:transparent; color:inherit;
     border:none; outline:none; resize:none;
-    padding: 8px 10px;          /* reduced padding */
-    min-height: 40px;           /* slightly smaller min height */
-    max-height: 220px;          /* slightly smaller max height */
+    padding: 8px 10px;
+    min-height: 40px;
+    max-height: 220px;
     line-height: 1.45;
     font-family: inherit; font-size: 12.5px;
   }
   .field:focus-within{ border-color: var(--focus); }
   .send{
     position:absolute; right:6px; bottom:6px;
-    height:30px; min-width: 30px; padding:0 10px; /* slightly smaller */
+    height:30px; min-width: 30px; padding:0 10px;
     display:flex; align-items:center; justify-content:center;
     border-radius:8px; border:none; cursor:pointer;
     background:var(--btn); color:var(--btn-fg);
     font-size:12px;
+    gap:6px;
   }
   .send:hover{ background: var(--btn-hover); }
 </style>
@@ -250,10 +290,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <body>
 
   <div class="topbar">
-    <button id="run" class="btn" title="Run last plan">Run</button>
-    <button id="repair" class="btn" title="Repair last failure">Repair</button>
-    <button id="settings" class="btn" title="Open settings">Settings</button>
-    <button id="clear" class="btn" title="Clear history">Clear</button>
+    <button id="run" class="btn" title="Run last plan"><span class="icon">↦</span><span>Run</span></button>
+    <button id="repair" class="btn" title="Repair last failure"><span class="icon">🛠️</span><span>Repair</span></button>
+    <button id="settings" class="btn" title="Open settings"><span class="icon">⚙️</span><span>Settings</span></button>
+    <button id="clear" class="btn" title="Clear history"><span class="icon">🗑️</span><span>Clear</span></button>
   </div>
 
   <div id="body" class="scroll">
@@ -266,7 +306,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     <div class="composer-inner">
       <div class="field">
         <textarea id="input" placeholder="Type a request… (Ctrl/Cmd+Enter to send)"></textarea>
-        <button id="send" class="send" title="Send">Send</button>
+        <button id="send" class="send" title="Send"><span class="icon">➤</span><span>Send</span></button>
       </div>
     </div>
   </div>
@@ -291,14 +331,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   // ------- Helpers for special rendering -------
 
   function stripFileTree(text){
-    // Remove "File tree..." and anything after
     const m = text.match(/\\n\\s*File tree[\\s\\S]*$/i);
     if (m) return text.slice(0, m.index).trim();
     return text;
   }
 
   function tryParsePlan(text){
-    // Extract the largest {...} block and try to parse
     try {
       const pure = JSON.parse(text);
       if (pure && typeof pure === "object" && Array.isArray(pure.steps)) return pure;
@@ -319,9 +357,34 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     return /▶️\\s*Executed\\s+\\d+\\s+steps/i.test(text) || /\\bExecuted\\s+\\d+\\s+steps\\b/i.test(text);
   }
 
+  function isRevertSummary(text){
+    return /^↩️\\s*Reverted\\s+\\d+\\s+file\\(s\\)/.test(text) && /\\bNotes:\\b/i.test(text);
+  }
+
   // ------- UI adders -------
 
   function addInfoCard(raw){
+    // Special styling for revert: main line + tiny notes
+    if (isRevertSummary(raw)) {
+      const [firstLine, ...rest] = raw.split(/\\r?\\n/);
+      const noteLine = rest.join("\\n").replace(/^Notes:\\s*/i, "").trim();
+      if (empty) empty.remove();
+      const el = document.createElement("div");
+      el.className = "info";
+      const main = document.createElement("div");
+      main.textContent = firstLine;
+      el.appendChild(main);
+      if (noteLine) {
+        const note = document.createElement("span");
+        note.className = "note";
+        note.textContent = "Notes: " + noteLine;
+        el.appendChild(note);
+      }
+      thread.appendChild(el);
+      scrollToBottom();
+      return;
+    }
+
     const text = stripFileTree(raw);
     if (empty) empty.remove();
     const el = document.createElement("div");
@@ -331,17 +394,52 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     scrollToBottom();
   }
 
-  function addPlanCard(roleLabel, planObj, title = "📝 Generated Plan"){
+  function addPlanCard(planObj, title = "📝 Generated Plan"){
     if (empty) empty.remove();
     const wrapper = document.createElement("div");
     wrapper.className = "card model";
+
+    const head = document.createElement("div");
+    head.className = "card-head";
+
     const header = document.createElement("div");
     header.className = "card-title";
     header.textContent = title + (planObj?.goal ? " — " + String(planObj.goal) : "");
+
+    // Standard header actions (top-right)
+    const actions = document.createElement("div");
+    actions.className = "card-actions";
+
+    // Run icon (thin rightwards arrow, to match the outline style of ↩︎)
+    const runOne = document.createElement("button");
+    runOne.className = "icon-btn";
+    runOne.title = "Run this plan";
+    runOne.textContent = "↦";
+    runOne.addEventListener("click", (e) => {
+      e.stopPropagation();
+      vscode.postMessage({ type: "run-plan", plan: planObj });
+    });
+
+    const revertOne = document.createElement("button");
+    revertOne.className = "icon-btn";
+    revertOne.title = "Revert this plan";
+    revertOne.textContent = "↩︎";
+    revertOne.addEventListener("click", (e) => {
+      e.stopPropagation();
+      vscode.postMessage({ type: "revert-plan", plan: planObj });
+    });
+
+    actions.appendChild(runOne);
+    actions.appendChild(revertOne);
+
+    head.appendChild(header);
+    head.appendChild(actions);
+
     const pre = document.createElement("pre");
     pre.className = "code";
     pre.textContent = JSON.stringify(planObj, null, 2); // pretty + wrapped via CSS
-    wrapper.appendChild(header);
+
+    wrapper.appendChild(head);
     wrapper.appendChild(pre);
     thread.appendChild(wrapper);
     scrollToBottom();
@@ -351,7 +449,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     addInfoCard(text);
   }
 
-  // LEFT = model, RIGHT = user (bubbles)
+  // LEFT = model, RIGHT = user (bubbles without tails)
   function addBubble(role, text){
     if (empty) empty.remove();
     const row = document.createElement("div");
@@ -375,11 +473,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const maybePlan = tryParsePlan(text);
     if (maybePlan) {
       const label = fromHistory ? "📝 Plan (from history)" : "📝 Plan ready";
-      addPlanCard("model", maybePlan, label);
+      addPlanCard(maybePlan, label);
       return;
     }
 
-    if (isExecutionSummary(text)) {
+    if (isExecutionSummary(text) || isRevertSummary(text)) {
       addInfoCard(text);
       return;
     }
