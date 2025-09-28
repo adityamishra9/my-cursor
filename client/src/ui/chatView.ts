@@ -87,11 +87,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>My Cursor — Chat</title>
 <style>
-  :root {
+  :root{
     --bg: var(--vscode-editor-background);
     --panel: var(--vscode-sideBar-background);
     --text: var(--vscode-foreground);
-    --subtle: var(--vscode-descriptionForeground);
+    --muted: var(--vscode-descriptionForeground);
     --link: var(--vscode-textLink-foreground);
     --border: var(--vscode-panel-border);
     --btn: var(--vscode-button-background);
@@ -101,53 +101,121 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     --input-fg: var(--vscode-input-foreground);
     --focus: var(--vscode-focusBorder);
     --shadow: 0 0 0 1px var(--border);
-    --radius: 10px;
+    --radius: 12px;
+    --bubble-user: var(--vscode-input-background);
+    --bubble-model: var(--vscode-editorWidget-background);
   }
-  html,body { height:100%; }
-  body { margin:0; background:var(--bg); color:var(--text); font-family:var(--vscode-font-family); display:grid; grid-template-rows:auto 1fr auto; }
-  .topbar { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; border-bottom:1px solid var(--border); }
-  .title { font-weight:600; letter-spacing:.2px; }
-  .actions { display:flex; gap:8px; }
-  .btn { background:var(--btn); color:var(--btn-fg); border:none; border-radius:8px; padding:6px 10px; cursor:pointer; }
-  .btn:hover { background:var(--btn-hover); }
-  .btn[disabled] { opacity:.6; cursor:not-allowed; }
-  .scroll { overflow:auto; padding:10px; }
-  .msg { max-width:880px; margin:10px auto; padding:12px 14px; border:1px solid var(--border); border-radius:var(--radius); background:var(--panel); box-shadow:var(--shadow); line-height:1.5; white-space:pre-wrap; word-break:break-word; }
-  .msg.user { background:transparent; border-style:dashed; }
-  .status { text-align:center; color:var(--subtle); font-size:12px; margin:8px 0; }
-  .empty { display:grid; place-items:center; height:100%; color:var(--subtle); }
-  .composer { border-top:1px solid var(--border); background:var(--bg); padding:10px; }
-  .composer-inner { max-width:980px; margin:0 auto; display:grid; grid-template-columns:1fr auto; gap:10px; align-items:end; }
-  .textarea { background:var(--input-bg); color:var(--input-fg); border:1px solid var(--border); border-radius:var(--radius); padding:10px 12px; min-height:48px; max-height:220px; overflow:auto; outline:none; }
-  .textarea:focus { border-color:var(--focus); }
-  .controls { display:flex; gap:8px; align-items:center; }
-  .pill { border:1px solid var(--border); border-radius:999px; padding:8px 12px; background:var(--panel); box-shadow:var(--shadow); font-size:12px; line-height:1; white-space:nowrap; }
-  .link { color:var(--link); text-decoration:none; }
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family: var(--vscode-font-family);
+    display:grid; grid-template-rows:auto 1fr auto;
+  }
+
+  /* Top bar — centered actions, no title */
+  .topbar{
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    padding:8px 10px; border-bottom:1px solid var(--border);
+  }
+  .btn{
+    background:var(--btn); color:var(--btn-fg);
+    border:none; border-radius:8px; padding:6px 10px; cursor:pointer;
+  }
+  .btn:hover{ background:var(--btn-hover); }
+  .btn[disabled]{ opacity:.6; cursor:not-allowed; }
+
+  /* Chat scroll area */
+  .scroll{ overflow:auto; padding:12px; }
+  .thread{ max-width: 980px; margin: 0 auto; display:flex; flex-direction:column; gap:10px; }
+
+  /* Status line */
+  .status{ text-align:center; color:var(--muted); font-size:12px; margin:6px 0; }
+
+  /* Bubbles */
+  .row{ display:flex; }
+  .bubble{
+    max-width: 82%;
+    padding: 10px 12px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow);
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  /* LEFT = model/editor, RIGHT = user */
+  .model { justify-content: flex-start; } /* left */
+  .model .bubble{
+    background: var(--bubble-model);
+    border-top-left-radius: 6px;   /* tail-ish corner on left */
+  }
+  .user { justify-content: flex-end; } /* right */
+  .user .bubble{
+    background: var(--bubble-user);
+    border-top-right-radius: 6px;  /* tail-ish corner on right */
+  }
+
+  .empty{
+    display:grid; place-items:center; height:100%; color:var(--muted);
+    font-size: 13px;
+  }
+
+  /* Composer — modern, inline send button, auto-grow */
+  .composer{
+    border-top:1px solid var(--border);
+    background:var(--bg);
+    padding: 12px;
+  }
+  .composer-inner{
+    max-width: 980px; margin: 0 auto; position: relative;
+  }
+  .field{
+    position: relative;
+    background: var(--input-bg); color: var(--input-fg);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding-right: 44px; /* room for send button */
+  }
+  textarea#input{
+    display:block; width:100%;
+    background:transparent; color:inherit;
+    border:none; outline:none; resize:none;
+    padding: 10px 12px;
+    min-height: 44px; max-height: 240px;
+    line-height: 1.5; font-family: inherit; font-size: 13px;
+  }
+  .field:focus-within{ border-color: var(--focus); }
+  .send{
+    position:absolute; right:6px; bottom:6px;
+    height:32px; min-width: 32px; padding:0 10px;
+    display:flex; align-items:center; justify-content:center;
+    border-radius:8px; border:none; cursor:pointer;
+    background:var(--btn); color:var(--btn-fg);
+  }
+  .send:hover{ background: var(--btn-hover); }
 </style>
 </head>
 <body>
 
   <div class="topbar">
-    <div class="title">Chat</div>
-    <div class="actions">
-      <button id="run" class="btn" title="Run last plan">Run</button>
-      <button id="repair" class="btn" title="Repair last failure">Repair</button>
-      <button id="settings" class="btn" title="Open settings">Settings</button>
-      <button id="clear" class="btn" title="Clear history">Clear</button>
-    </div>
+    <button id="run" class="btn" title="Run last plan">Run</button>
+    <button id="repair" class="btn" title="Repair last failure">Repair</button>
+    <button id="settings" class="btn" title="Open settings">Settings</button>
+    <button id="clear" class="btn" title="Clear history">Clear</button>
   </div>
 
   <div id="body" class="scroll">
-    <div id="empty" class="empty">Ask about your code. Responses may be inaccurate.</div>
+    <div class="thread" id="thread">
+      <div id="empty" class="empty">Ask about your code. Responses may be inaccurate.</div>
+    </div>
   </div>
 
   <div class="composer">
     <div class="composer-inner">
-      <div id="input" class="textarea" contenteditable="true" spellcheck="true"></div>
-      <div class="controls">
-        <div class="pill">Ask ▾</div>
-        <div class="pill">Model ▾</div>
-        <button id="send" class="btn" title="Send (Ctrl/Cmd+Enter)">Send</button>
+      <div class="field">
+        <textarea id="input" placeholder="Type a request… (Ctrl/Cmd+Enter to send)"></textarea>
+        <button id="send" class="send" title="Send">Send</button>
       </div>
     </div>
   </div>
@@ -156,29 +224,41 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   const vscode = acquireVsCodeApi();
   const $ = (s)=>document.querySelector(s);
   const body = $("#body");
-  const empty = $("#empty");
-  const input = $("#input");
+  const thread = $("#thread");
+  let empty = $("#empty"); // will be reassigned after clear
+  const input = /** @type {HTMLTextAreaElement} */ ($("#input"));
   const send = $("#send");
   const runBtn = $("#run");
   const repairBtn = $("#repair");
   const settingsBtn = $("#settings");
   const clearBtn = $("#clear");
 
+  function scrollToBottom(){
+    body.scrollTop = body.scrollHeight;
+  }
+
   function addStatus(text){
     const el = document.createElement("div");
     el.className = "status";
     el.textContent = text;
-    body.appendChild(el);
-    body.scrollTop = body.scrollHeight;
+    thread.appendChild(el);
+    scrollToBottom();
     return el;
   }
-  function addMsg(role, text){
+
+  // LEFT = model, RIGHT = user
+  function addBubble(role, text){
     if (empty) empty.remove();
-    const el = document.createElement("div");
-    el.className = "msg " + role;
-    el.textContent = text;
-    body.appendChild(el);
-    body.scrollTop = body.scrollHeight;
+    const row = document.createElement("div");
+    row.className = "row " + (role === "model" ? "model" : "user");
+
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.textContent = text;
+
+    row.appendChild(bubble);
+    thread.appendChild(row);
+    scrollToBottom();
   }
 
   function setOps({running, canRepair}) {
@@ -187,28 +267,61 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   function sendPrompt(){
-    const text = (input.textContent || "").trim();
+    const text = (input.value || "").trim();
     if (!text) return;
-    addMsg("user", text);
-    input.textContent = "";
+    addBubble("user", text); // user on the right
+    input.value = "";
+    autoGrow();
     vscode.postMessage({ type: "prompt", text });
   }
 
+  // Auto-grow textarea
+  function autoGrow(){
+    input.style.height = "auto";
+    const next = Math.min(input.scrollHeight, 240);
+    input.style.height = next + "px";
+  }
+  input.addEventListener("input", autoGrow);
+  window.addEventListener("load", autoGrow);
+
+  function clearThreadUI(){
+    // Remove all children
+    while (thread.firstChild) thread.removeChild(thread.firstChild);
+    // Recreate placeholder
+    const ph = document.createElement("div");
+    ph.id = "empty";
+    ph.className = "empty";
+    ph.textContent = "Ask about your code. Responses may be inaccurate.";
+    thread.appendChild(ph);
+    empty = ph; // update ref
+    scrollToBottom();
+  }
+
+  // Events
   send.addEventListener("click", sendPrompt);
   input.addEventListener("keydown", e => {
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") sendPrompt();
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      sendPrompt();
+    }
   });
   runBtn.addEventListener("click", ()=> vscode.postMessage({ type: "run" }));
   repairBtn.addEventListener("click", ()=> vscode.postMessage({ type: "repair" }));
   settingsBtn.addEventListener("click", ()=> vscode.postMessage({ type: "open-settings" }));
-  clearBtn.addEventListener("click", ()=> vscode.postMessage({ type: "clear-history" }));
+  clearBtn.addEventListener("click", ()=> {
+    clearThreadUI();                       // clear immediately in UI
+    vscode.postMessage({ type: "clear-history" }); // then clear persisted history
+  });
 
   window.addEventListener("message", (event) => {
     const msg = event.data;
     if (msg?.type === "status") addStatus(msg.message);
-    else if (msg?.type === "history") for (const h of msg.history) addMsg(h.role, h.text);
-    else if (msg?.type === "model") addMsg("model", msg.text);
-    else if (msg?.type === "error") addMsg("model", "⚠️ " + msg.message);
+    else if (msg?.type === "history") {
+      // Render existing history using new alignment: model left, user right
+      for (const h of msg.history) addBubble(h.role, h.text);
+    }
+    else if (msg?.type === "model") addBubble("model", msg.text);   // model/editor on left
+    else if (msg?.type === "error") addBubble("model", "⚠️ " + msg.message);
     else if (msg?.type === "ops") setOps(msg);
   });
 
