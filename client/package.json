@@ -1,73 +1,52 @@
 {
   "name": "myy-cursor",
   "displayName": "Myy Cursor",
-  "description": "Turn natural language into safe, reviewable workspace changes via your proxy-controlled LLM (Gemini / OpenAI / Anthropic): plan → preview → execute.",
+  "description": "Turn natural language into safe, reviewable workspace changes via your proxy-controlled LLM (Gemini / OpenAI / Anthropic): plan → preview → execute — now in a sidebar chat.",
   "version": "1.0.0",
   "publisher": "adityamishra9",
   "icon": "media/icon.png",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/adityamishra9/my-cursor"
-  },
-  "bugs": {
-    "url": "https://github.com/adityamishra9/my-cursor/issues"
-  },
+  "repository": { "type": "git", "url": "https://github.com/adityamishra9/my-cursor" },
+  "bugs": { "url": "https://github.com/adityamishra9/my-cursor/issues" },
   "homepage": "https://github.com/adityamishra9/my-cursor#readme",
-  "engines": {
-    "vscode": "^1.104.0"
-  },
-  "categories": [
-    "Other",
-    "Programming Languages",
-    "Debuggers"
-  ],
-  "keywords": [
-    "ai",
-    "llm",
-    "gemini",
-    "openai",
-    "anthropic",
-    "automation",
-    "codegen",
-    "cursor"
-  ],
-  "extensionKind": [
-    "workspace"
-  ],
+  "engines": { "vscode": "^1.104.0" },
+  "categories": ["Other", "Programming Languages", "Debuggers"],
+  "keywords": ["ai","llm","gemini","openai","anthropic","automation","codegen","cursor"],
+  "extensionKind": ["workspace"],
   "activationEvents": [
-    "onCommand:my-cursor.plan",
-    "onCommand:my-cursor.clearHistory",
-    "onCommand:my-cursor.repairLast"
+    "onView:my-cursor.chat"
   ],
+
   "main": "./out/extension.js",
+
   "contributes": {
-    "commands": [
-      {
-        "command": "my-cursor.plan",
-        "title": "My Cursor: Plan & Run"
-      },
-      {
-        "command": "my-cursor.clearHistory",
-        "title": "My Cursor: Clear Conversation History"
-      },
-      {
-        "command": "my-cursor.repairLast",
-        "title": "My Cursor: Repair Last Failure"
-      }
-    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "my-cursor",
+          "title": "My Cursor",
+          "icon": "media/icon.png"
+        }
+      ]
+    },
+    "views": {
+      "my-cursor": [
+        {
+          "type": "webview",
+          "id": "my-cursor.chat",
+          "name": "Chat",
+          "when": "workspaceFolderCount > 0"
+        }
+      ]
+    },
     "configuration": {
       "title": "My Cursor",
       "properties": {
         "myCursor.provider": {
           "type": "string",
           "default": "gemini",
-          "enum": [
-            "gemini",
-            "openai",
-            "anthropic"
-          ],
-          "description": "Which provider to route via your proxy."
+          "enum": ["gemini", "openai", "anthropic"],
+          "description": "Which provider your proxy will route."
         },
         "myCursor.model": {
           "type": "string",
@@ -94,12 +73,12 @@
         "myCursor.autoRun": {
           "type": "boolean",
           "default": false,
-          "description": "If true, skip the Run confirmation dialog and execute immediately."
+          "description": "Skip the Run confirmation and execute immediately."
         },
         "myCursor.persistHistory": {
           "type": "boolean",
           "default": true,
-          "description": "Persist conversation history between sessions."
+          "description": "Persist chat history between sessions."
         },
         "myCursor.openFilesAfterWrite": {
           "type": "boolean",
@@ -121,18 +100,19 @@
         "myCursor.autoRepair": {
           "type": "boolean",
           "default": true,
-          "description": "After a failed run, ask the LLM for a targeted repair plan."
+          "description": "After a failed run, ask for a targeted repair plan."
         },
         "myCursor.maxRepairAttempts": {
           "type": "number",
           "default": 2,
           "minimum": 0,
           "maximum": 5,
-          "description": "Max consecutive repair plans to attempt automatically."
+          "description": "Max consecutive repair plans to attempt."
         }
       }
     }
   },
+
   "scripts": {
     "vscode:prepublish": "tsc -p ./",
     "compile": "tsc -watch -p ./",
@@ -140,6 +120,7 @@
     "package": "vsce package",
     "publish": "vsce publish"
   },
+
   "devDependencies": {
     "@types/node": "^20.14.10",
     "@types/vscode": "^1.104.0",

@@ -2,23 +2,19 @@
 import * as vscode from "vscode";
 import { generatePlan, generateRepairPlan } from "./engine/gemini";
 import { executePlan } from "./engine/executor";
-import { PlanPanel } from "./ui/planPanel";
 import type { Plan } from "./engine/plan";
+import { ChatViewProvider, ChatFromWeb } from "./ui/chatView";
 
 let lastPlan: Plan | null = null;
 let lastFolder: vscode.WorkspaceFolder | null = null;
 let lastFailuresBrief: string | null = null;
+let history: { role: "user" | "model"; text: string }[] = [];
 
 export function activate(context: vscode.ExtensionContext) {
   const out = vscode.window.createOutputChannel("My Cursor");
 
-  // --- persistent history (last 50 turns) ---
-  const stateKey = "my-cursor.history";
-  const loaded =
-    context.globalState.get<{ role: "user" | "model"; text: string }[]>(
-      stateKey
-    ) ?? [];
-  let history: { role: "user" | "model"; text: string }[] = loaded;
+  const chatProvider = new ChatViewProvider(context);
+  history = chatProvider.loadHistory();
 
   function getExtCfg() {
     const cfg = vscode.workspace.getConfiguration("myCursor");
@@ -31,48 +27,32 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   async function maybeSaveHistory() {
-    const { persistHistory } = getExtCfg();
-    if (persistHistory) {
-      await context.globalState.update(stateKey, history.slice(-50));
-    }
+    await chatProvider.saveHistory(history);
   }
 
-  // --- multi-root: ask user which folder to use ---
-  async function pickWorkspaceFolder(): Promise<
-    vscode.WorkspaceFolder | undefined
-  > {
+  async function pickWorkspaceFolder(): Promise<vscode.WorkspaceFolder | null> {
     const folders = vscode.workspace.workspaceFolders;
-    if (!folders || folders.length === 0) return undefined;
+    if (!folders || folders.length === 0) return null;
     if (folders.length === 1) return folders[0];
-
     const pick = await vscode.window.showQuickPick(
       folders.map((f) => ({ label: f.name, description: f.uri.fsPath, f })),
       { title: "Select workspace folder for My Cursor" }
     );
-    return pick?.f;
+    return pick?.f ?? null;
   }
 
-  // Shared runner used by commands
   async function runPlan(plan: Plan, folder: vscode.WorkspaceFolder) {
+    chatProvider.post({ type: "ops", running: true, canRepair: !!lastFailuresBrief });
+
     out.show(true);
     out.appendLine(`Goal: ${plan.goal}`);
     out.appendLine(`Root: ${plan.root}`);
 
     try {
       const { results, tree } = await executePlan(plan, folder, out);
-
       const ok = results.filter((r) => r.ok).length;
       const failed = results.length - ok;
 
-      out.appendLine(`Done. OK: ${ok}, Failed: ${failed}`);
-      for (const r of results) {
-        if (!r.ok) out.appendLine(`  ❌ ${r.step}: ${r.error}`);
-      }
-
-      out.appendLine("\nFile tree after run:");
-      for (const t of tree) out.appendLine("  " + t);
-
-      // Prepare a compact failure brief for loopback
       lastFailuresBrief =
         failed === 0
           ? null
@@ -81,38 +61,70 @@ export function activate(context: vscode.ExtensionContext) {
               .map((r) => `- ${r.step}: ${"error" in r ? r.error : ""}`)
               .join("\n");
 
-      vscode.window.showInformationMessage(
-        `My Cursor: ${ok} steps OK, ${failed} failed. See “My Cursor” output.`
-      );
+      const summary =
+        `▶️ Executed ${results.length} steps — OK: ${ok}, Failed: ${failed}\n\n` +
+        (failed ? `Failures:\n${lastFailuresBrief}\n\n` : "") +
+        `File tree (first 5):\n${tree.slice(0, 5).join("\n")}`;
 
-      return { failed, treePreview: tree.slice(0, 150).join("\n") };
+      history.push({ role: "model", text: summary });
+      await maybeSaveHistory();
+      chatProvider.post({ type: "model", text: summary });
     } catch (e: any) {
       const msg = `My Cursor error (execute): ${e.message}`;
       out.appendLine(msg);
       lastFailuresBrief = `- runtime exception: ${e.message}`;
-      vscode.window.showErrorMessage(msg);
-      return { failed: 1, treePreview: "" };
+      history.push({ role: "model", text: "⚠️ " + msg });
+      await maybeSaveHistory();
+      chatProvider.post({ type: "error", message: msg });
+    } finally {
+      chatProvider.post({ type: "ops", running: false, canRepair: !!lastFailuresBrief });
     }
   }
 
-  // Hidden command invoked by the webview's command URI
-  const cmdRunPlanNow = vscode.commands.registerCommand(
-    "my-cursor.runPlanNow",
-    async () => {
-      if (!lastPlan || !lastFolder) {
-        vscode.window.showWarningMessage(
-          "No plan ready to run. Generate a plan first (My Cursor: Plan & Run)."
-        );
-        return;
-      }
-      await runPlan(lastPlan, lastFolder);
-    }
+  // Register the sidebar view
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(ChatViewProvider.viewId, chatProvider)
   );
 
-  const cmdRepairLast = vscode.commands.registerCommand(
-    "my-cursor.repairLast",
-    async () => {
-      const { autoRun } = getExtCfg();
+  // Handle messages from the webview
+  chatProvider.onMessage = async (m: ChatFromWeb) => {
+    if (m.type === "ready") {
+      chatProvider.post({ type: "ops", running: false, canRepair: !!lastFailuresBrief });
+      return;
+    }
+
+    if (m.type === "open-settings") {
+      vscode.commands.executeCommand(
+        "workbench.action.openSettings",
+        "myCursor"
+      );
+      return;
+    }
+
+    if (m.type === "clear-history") {
+      history = [];
+      chatProvider.clearHistory();
+      vscode.window.showInformationMessage("My Cursor: History cleared.");
+      return;
+    }
+
+    if (m.type === "run") {
+      if (!lastPlan) {
+        vscode.window.showWarningMessage("No plan ready. Ask for something first.");
+        return;
+      }
+      if (!lastFolder) {
+        lastFolder = await pickWorkspaceFolder();
+        if (!lastFolder) {
+          vscode.window.showErrorMessage("Open/select a folder to run My Cursor.");
+          return;
+        }
+      }
+      await runPlan(lastPlan, lastFolder);
+      return;
+    }
+
+    if (m.type === "repair") {
       if (!lastFolder) {
         vscode.window.showWarningMessage("No previous run context.");
         return;
@@ -123,141 +135,86 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       const contextBrief =
-        (lastPlan
-          ? `previous goal: ${lastPlan.goal}\nroot: ${lastPlan.root}\n`
-          : "") + `workspace: ${lastFolder.uri.fsPath}`;
+        (lastPlan ? `previous goal: ${lastPlan.goal}\nroot: ${lastPlan.root}\n` : "") +
+        `workspace: ${lastFolder.uri.fsPath}`;
 
       try {
-        const repair = await vscode.window.withProgress(
-          { location: vscode.ProgressLocation.Notification, title: "Generating repair plan…" },
-          () => generateRepairPlan(context, lastFailuresBrief!, contextBrief, history)
-        );
-
+        chatProvider.post({ type: "status", message: "Generating repair plan…" });
+        const repair = await generateRepairPlan(context, lastFailuresBrief!, contextBrief, history);
         history.push({ role: "user", text: "[repair] " + lastFailuresBrief });
         history.push({ role: "model", text: JSON.stringify(repair) });
         await maybeSaveHistory();
 
-        lastPlan = repair; // allow re-run via button
-        PlanPanel.show(repair);
+        lastPlan = repair;
+        chatProvider.post({ type: "model", text: "🛠️ Repair plan ready. Use Run to execute." });
 
-        if (autoRun) {
-          await runPlan(repair, lastFolder);
-        } else {
-          const choice = await vscode.window.showInformationMessage(
-            "Repair plan generated. Run it?",
-            "Run Repair",
-            "Dismiss"
-          );
-          if (choice === "Run Repair") {
-            await runPlan(repair, lastFolder);
-          }
-        }
+        const { autoRun } = getExtCfg();
+        if (autoRun) await runPlan(repair, lastFolder);
       } catch (e: any) {
-        vscode.window.showErrorMessage(`Repair failed: ${e.message}`);
+        chatProvider.post({ type: "error", message: `Repair failed: ${e.message}` });
       }
-    }
-  );
-
-  // --- commands ---
-  const cmdClearHistory = vscode.commands.registerCommand(
-    "my-cursor.clearHistory",
-    async () => {
-      history = [];
-      await context.globalState.update(stateKey, []);
-      vscode.window.showInformationMessage("My Cursor: History cleared.");
-    }
-  );
-
-  const cmdPlan = vscode.commands.registerCommand("my-cursor.plan", async () => {
-    const folder = await pickWorkspaceFolder();
-    if (!folder) {
-      vscode.window.showErrorMessage("Open a folder (or select one) to run My Cursor.");
       return;
     }
 
-    const req = await vscode.window.showInputBox({
-      title: "What should I build?",
-      prompt: "Describe your request (e.g., 'Scaffold Next.js + Tailwind + /api/todos').",
-      ignoreFocusOut: true,
-    });
-    if (!req) return;
-
-    try {
-      // ✅ Only the model call is wrapped in progress.
-      const plan = await vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: "Generating plan…",
-        },
-        () => generatePlan(context, req, history)
-      );
-
-      // After progress finishes, do the rest (so the spinner goes away)
-      history.push({ role: "user", text: req });
-      history.push({ role: "model", text: JSON.stringify(plan) });
-      await maybeSaveHistory();
-
-      // Track for "Run Plan" command
-      lastPlan = plan;
-      lastFolder = folder;
-
-      // Show preview
-      PlanPanel.show(plan);
-
-      const { autoRun, autoRepair, maxRepairAttempts } = getExtCfg();
-
-      // Prompt to run (or autorun)
-      let proceed = autoRun;
-      if (!autoRun) {
-        const choice = await vscode.window.showInformationMessage(
-          "Plan generated. Review in the Plan Preview. Proceed to execute?",
-          "Run",
-          "Dismiss"
-        );
-        proceed = choice === "Run";
+    if (m.type === "prompt") {
+      // 1) Pick folder if needed
+      if (!lastFolder) {
+        lastFolder = await pickWorkspaceFolder();
+        if (!lastFolder) {
+          vscode.window.showErrorMessage("Open/select a folder to run My Cursor.");
+          return;
+        }
       }
 
-      if (!proceed) {
-        out.appendLine("User dismissed run notification.");
-        return;
-      }
+      // 2) Plan
+      try {
+        chatProvider.post({ type: "status", message: "Generating plan…" });
+        const plan = await generatePlan(context, m.text, history);
 
-      // Execute with optional auto-repair loop
-      let attempts = 0;
-      let runResult = await runPlan(plan, folder);
-
-      while (autoRepair && runResult.failed > 0 && attempts < maxRepairAttempts) {
-        attempts++;
-        if (!lastFailuresBrief) break;
-
-        const contextBrief =
-          `previous goal: ${plan.goal}\nroot: ${plan.root}\n` +
-          `tree (truncated):\n${runResult.treePreview}\nworkspace: ${folder.uri.fsPath}`;
-
-        const repairPlan = await vscode.window.withProgress(
-          {
-            location: vscode.ProgressLocation.Notification,
-            title: `Generating repair plan (attempt ${attempts}/${maxRepairAttempts})…`,
-          },
-          () => generateRepairPlan(context, lastFailuresBrief!, contextBrief, history)
-        );
-
-        history.push({ role: "user", text: `[auto-repair attempt ${attempts}] ${lastFailuresBrief}` });
-        history.push({ role: "model", text: JSON.stringify(repairPlan) });
+        // Record conversation
+        history.push({ role: "user", text: m.text });
+        history.push({ role: "model", text: JSON.stringify(plan) });
         await maybeSaveHistory();
 
-        lastPlan = repairPlan;
-        PlanPanel.show(repairPlan);
+        lastPlan = plan;
+        chatProvider.post({ type: "model", text: `📝 Plan ready:\n${JSON.stringify(plan, null, 2)}` });
 
-        // autorun repair
-        runResult = await runPlan(repairPlan, folder);
+        // 3) Optional execute + auto-repair loop
+        const { autoRun, autoRepair, maxRepairAttempts } = getExtCfg();
+
+        if (!autoRun) {
+          // Leave it to user to click Run
+          chatProvider.post({ type: "ops", running: false, canRepair: !!lastFailuresBrief });
+          return;
+        }
+
+        // Autorun
+        let attempts = 0;
+        await runPlan(plan, lastFolder);
+
+        while (autoRepair && lastFailuresBrief && attempts < maxRepairAttempts) {
+          attempts++;
+          const contextBrief =
+            `previous goal: ${plan.goal}\nroot: ${plan.root}\nworkspace: ${lastFolder.uri.fsPath}`;
+          chatProvider.post({ type: "status", message: `Generating repair plan (attempt ${attempts}/${maxRepairAttempts})…` });
+          const repairPlan = await generateRepairPlan(context, lastFailuresBrief, contextBrief, history);
+
+          history.push({ role: "user", text: `[auto-repair attempt ${attempts}] ${lastFailuresBrief}` });
+          history.push({ role: "model", text: JSON.stringify(repairPlan) });
+          await maybeSaveHistory();
+
+          lastPlan = repairPlan;
+          chatProvider.post({ type: "model", text: `🛠️ Repair plan:\n${JSON.stringify(repairPlan, null, 2)}` });
+
+          await runPlan(repairPlan, lastFolder);
+        }
+      } catch (e: any) {
+        chatProvider.post({ type: "error", message: `My Cursor error: ${e.message}` });
       }
-    } catch (e: any) {
-      vscode.window.showErrorMessage(`My Cursor error: ${e.message}`);
     }
-  });
+  };
 
-  context.subscriptions.push(cmdRunPlanNow, cmdRepairLast, cmdClearHistory, cmdPlan, out);
+  context.subscriptions.push(out);
 }
 
 export function deactivate() {}
