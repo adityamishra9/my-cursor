@@ -28,7 +28,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.view = webviewView;
 
     webviewView.webview.options = { enableScripts: true };
-
     webviewView.webview.html = this.html(webviewView.webview);
 
     // Initial handshake
@@ -104,6 +103,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     --radius: 12px;
     --bubble-user: var(--vscode-input-background);
     --bubble-model: var(--vscode-editorWidget-background);
+    --card-bg: var(--vscode-editorWidget-background);
   }
   html,body{height:100%}
   body{
@@ -120,26 +120,42 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   .btn{
     background:var(--btn); color:var(--btn-fg);
     border:none; border-radius:8px; padding:6px 10px; cursor:pointer;
+    font-size:12px;
   }
   .btn:hover{ background:var(--btn-hover); }
   .btn[disabled]{ opacity:.6; cursor:not-allowed; }
 
   /* Chat scroll area */
-  .scroll{ overflow:auto; padding:12px; }
-  .thread{ max-width: 980px; margin: 0 auto; display:flex; flex-direction:column; gap:10px; }
+  .scroll{ overflow:auto; padding:10px; }
+  .thread{ max-width: 980px; margin: 0 auto; display:flex; flex-direction:column; gap:8px; }
 
-  /* Status line */
-  .status{ text-align:center; color:var(--muted); font-size:12px; margin:6px 0; }
+  /* Compact info/status card */
+  .info{
+    align-self:center;
+    max-width: 92%;
+    background: var(--card-bg);
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    padding: 8px 10px;          /* reduced padding */
+    color: var(--text);
+    opacity: 0.95;
+    font-size: 12px;            /* smaller font */
+    line-height: 1.45;
+    white-space: pre-wrap;      /* preserve newlines, wrap long lines */
+    word-break: break-word;
+  }
+  .info strong{ font-weight: 600; }
 
-  /* Bubbles */
+  /* Bubbles (compact) */
   .row{ display:flex; }
   .bubble{
     max-width: 82%;
-    padding: 10px 12px;
+    padding: 8px 10px;          /* reduced padding */
     border-radius: var(--radius);
     border: 1px solid var(--border);
     box-shadow: var(--shadow);
-    line-height: 1.5;
+    line-height: 1.45;          /* slightly tighter */
+    font-size: 12.5px;          /* slightly smaller text */
     white-space: pre-wrap;
     word-break: break-word;
   }
@@ -148,12 +164,44 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   .model { justify-content: flex-start; } /* left */
   .model .bubble{
     background: var(--bubble-model);
-    border-top-left-radius: 6px;   /* tail-ish corner on left */
+    border-top-left-radius: 6px;
   }
   .user { justify-content: flex-end; } /* right */
   .user .bubble{
     background: var(--bubble-user);
-    border-top-right-radius: 6px;  /* tail-ish corner on right */
+    border-top-right-radius: 6px;
+  }
+
+  /* Card (for formatted plan JSON etc.) — compact */
+  .card{
+    max-width: 82%;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 8px 10px;          /* reduced padding */
+    font-size: 12.5px;
+    line-height: 1.45;
+  }
+  .card.model { align-self: flex-start; }
+  .card.user { align-self: flex-end; }
+  .card-title{ font-weight:600; margin-bottom:6px; font-size:12.5px; }
+
+  /* Code block — wrap long content vertically, no horizontal scroll */
+  pre.code{
+    margin:0;
+    padding:8px 10px;           /* reduced padding */
+    border-radius: 8px;
+    border:1px solid var(--border);
+    background: var(--vscode-editor-background);
+    overflow-y: auto;           /* vertical scroll only when needed */
+    overflow-x: hidden;         /* prevent horizontal scroll */
+    max-height: 340px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;      /* <-- wrap long strings */
+    word-break: break-word;     /* break long tokens */
   }
 
   .empty{
@@ -165,7 +213,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   .composer{
     border-top:1px solid var(--border);
     background:var(--bg);
-    padding: 12px;
+    padding: 10px;
   }
   .composer-inner{
     max-width: 980px; margin: 0 auto; position: relative;
@@ -181,17 +229,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     display:block; width:100%;
     background:transparent; color:inherit;
     border:none; outline:none; resize:none;
-    padding: 10px 12px;
-    min-height: 44px; max-height: 240px;
-    line-height: 1.5; font-family: inherit; font-size: 13px;
+    padding: 8px 10px;          /* reduced padding */
+    min-height: 40px;           /* slightly smaller min height */
+    max-height: 220px;          /* slightly smaller max height */
+    line-height: 1.45;
+    font-family: inherit; font-size: 12.5px;
   }
   .field:focus-within{ border-color: var(--focus); }
   .send{
     position:absolute; right:6px; bottom:6px;
-    height:32px; min-width: 32px; padding:0 10px;
+    height:30px; min-width: 30px; padding:0 10px; /* slightly smaller */
     display:flex; align-items:center; justify-content:center;
     border-radius:8px; border:none; cursor:pointer;
     background:var(--btn); color:var(--btn-fg);
+    font-size:12px;
   }
   .send:hover{ background: var(--btn-hover); }
 </style>
@@ -237,16 +288,70 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     body.scrollTop = body.scrollHeight;
   }
 
-  function addStatus(text){
-    const el = document.createElement("div");
-    el.className = "status";
-    el.textContent = text;
-    thread.appendChild(el);
-    scrollToBottom();
-    return el;
+  // ------- Helpers for special rendering -------
+
+  function stripFileTree(text){
+    // Remove "File tree..." and anything after
+    const m = text.match(/\\n\\s*File tree[\\s\\S]*$/i);
+    if (m) return text.slice(0, m.index).trim();
+    return text;
   }
 
-  // LEFT = model, RIGHT = user
+  function tryParsePlan(text){
+    // Extract the largest {...} block and try to parse
+    try {
+      const pure = JSON.parse(text);
+      if (pure && typeof pure === "object" && Array.isArray(pure.steps)) return pure;
+    } catch {}
+    const first = text.indexOf("{");
+    const last = text.lastIndexOf("}");
+    if (first >= 0 && last >= 0 && last > first) {
+      const slice = text.slice(first, last + 1);
+      try {
+        const obj = JSON.parse(slice);
+        if (obj && typeof obj === "object" && Array.isArray(obj.steps)) return obj;
+      } catch {}
+    }
+    return null;
+  }
+
+  function isExecutionSummary(text){
+    return /▶️\\s*Executed\\s+\\d+\\s+steps/i.test(text) || /\\bExecuted\\s+\\d+\\s+steps\\b/i.test(text);
+  }
+
+  // ------- UI adders -------
+
+  function addInfoCard(raw){
+    const text = stripFileTree(raw);
+    if (empty) empty.remove();
+    const el = document.createElement("div");
+    el.className = "info";
+    el.innerText = text; // keep newlines, wrap long lines
+    thread.appendChild(el);
+    scrollToBottom();
+  }
+
+  function addPlanCard(roleLabel, planObj, title = "📝 Generated Plan"){
+    if (empty) empty.remove();
+    const wrapper = document.createElement("div");
+    wrapper.className = "card model";
+    const header = document.createElement("div");
+    header.className = "card-title";
+    header.textContent = title + (planObj?.goal ? " — " + String(planObj.goal) : "");
+    const pre = document.createElement("pre");
+    pre.className = "code";
+    pre.textContent = JSON.stringify(planObj, null, 2); // pretty + wrapped via CSS
+    wrapper.appendChild(header);
+    wrapper.appendChild(pre);
+    thread.appendChild(wrapper);
+    scrollToBottom();
+  }
+
+  function addStatus(text){
+    addInfoCard(text);
+  }
+
+  // LEFT = model, RIGHT = user (bubbles)
   function addBubble(role, text){
     if (empty) empty.remove();
     const row = document.createElement("div");
@@ -266,10 +371,28 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     repairBtn.disabled = running || !canRepair;
   }
 
+  function renderModelMessage(text, {fromHistory} = {fromHistory:false}){
+    const maybePlan = tryParsePlan(text);
+    if (maybePlan) {
+      const label = fromHistory ? "📝 Plan (from history)" : "📝 Plan ready";
+      addPlanCard("model", maybePlan, label);
+      return;
+    }
+
+    if (isExecutionSummary(text)) {
+      addInfoCard(text);
+      return;
+    }
+
+    addBubble("model", stripFileTree(text));
+  }
+
+  // ------- Composer & events -------
+
   function sendPrompt(){
     const text = (input.value || "").trim();
     if (!text) return;
-    addBubble("user", text); // user on the right
+    addBubble("user", text);
     input.value = "";
     autoGrow();
     vscode.postMessage({ type: "prompt", text });
@@ -278,26 +401,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   // Auto-grow textarea
   function autoGrow(){
     input.style.height = "auto";
-    const next = Math.min(input.scrollHeight, 240);
+    const next = Math.min(input.scrollHeight, 220);
     input.style.height = next + "px";
   }
   input.addEventListener("input", autoGrow);
   window.addEventListener("load", autoGrow);
 
   function clearThreadUI(){
-    // Remove all children
     while (thread.firstChild) thread.removeChild(thread.firstChild);
-    // Recreate placeholder
     const ph = document.createElement("div");
     ph.id = "empty";
     ph.className = "empty";
     ph.textContent = "Ask about your code. Responses may be inaccurate.";
     thread.appendChild(ph);
-    empty = ph; // update ref
+    empty = ph;
     scrollToBottom();
   }
 
-  // Events
+  // Buttons
   send.addEventListener("click", sendPrompt);
   input.addEventListener("keydown", e => {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
@@ -309,20 +430,30 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   repairBtn.addEventListener("click", ()=> vscode.postMessage({ type: "repair" }));
   settingsBtn.addEventListener("click", ()=> vscode.postMessage({ type: "open-settings" }));
   clearBtn.addEventListener("click", ()=> {
-    clearThreadUI();                       // clear immediately in UI
-    vscode.postMessage({ type: "clear-history" }); // then clear persisted history
+    clearThreadUI();
+    vscode.postMessage({ type: "clear-history" });
   });
 
+  // Message pump
   window.addEventListener("message", (event) => {
     const msg = event.data;
-    if (msg?.type === "status") addStatus(msg.message);
-    else if (msg?.type === "history") {
-      // Render existing history using new alignment: model left, user right
-      for (const h of msg.history) addBubble(h.role, h.text);
+    if (msg?.type === "status") {
+      addStatus(msg.message);
+    } else if (msg?.type === "history") {
+      for (const h of msg.history) {
+        if (h.role === "model") {
+          renderModelMessage(h.text, { fromHistory: true });
+        } else {
+          addBubble("user", h.text);
+        }
+      }
+    } else if (msg?.type === "model") {
+      renderModelMessage(msg.text, { fromHistory: false });
+    } else if (msg?.type === "error") {
+      renderModelMessage("⚠️ " + msg.message, { fromHistory: false });
+    } else if (msg?.type === "ops") {
+      setOps(msg);
     }
-    else if (msg?.type === "model") addBubble("model", msg.text);   // model/editor on left
-    else if (msg?.type === "error") addBubble("model", "⚠️ " + msg.message);
-    else if (msg?.type === "ops") setOps(msg);
   });
 
   vscode.postMessage({ type: "ready" });
