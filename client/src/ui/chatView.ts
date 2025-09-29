@@ -13,7 +13,7 @@ export type ChatFromWeb =
   | { type: "ready" }
   | { type: "prompt"; text: string }
   | { type: "clear-history" }
-  | { type: "run" }
+  | { type: "run" } // kept for host compatibility; no topbar button uses it
   | { type: "repair" }
   | { type: "open-settings" }
   | { type: "run-plan"; plan: any }
@@ -282,10 +282,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <body>
 
   <div class="topbar">
-    <button id="run" class="btn" title="Run last plan (▷)"><span class="icon">▷</span></button>
+    <!-- Topbar RUN removed -->
     <button id="repair" class="btn" title="Repair last failure (🛠)"><span class="icon">🛠️</span></button>
     <button id="settings" class="btn" title="Open settings (⚙)"><span class="icon">⚙️</span></button>
-    <button id="clear" class="btn" title="Clear history (🗑)"><span class="icon">🗑️</span></button>
+    <button id="newchat" class="btn" title="New chat (🆕)"><span class="icon">🆕</span></button>
   </div>
 
   <div id="body" class="scroll">
@@ -311,10 +311,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   let empty = $("#empty");
   const input = /** @type {HTMLTextAreaElement} */ ($("#input"));
   const send = $("#send");
-  const runBtn = $("#run");
   const repairBtn = $("#repair");
   const settingsBtn = $("#settings");
-  const clearBtn = $("#clear");
+  const newChatBtn = $("#newchat");
 
   // ---- Plan tracking state ----
   /** @type {Map<string, HTMLElement>} */
@@ -361,7 +360,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   function setOps({running, canRepair}) {
-    runBtn.disabled = running;
+    // Topbar RUN removed — only manage Repair enabled state
     repairBtn.disabled = running || !canRepair;
   }
 
@@ -396,7 +395,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   // ------- UI adders -------
   function addInfoCard(raw, linkKey = null){
-    // If revert summary, reshape to main line + note line
+    // If revert summary, reshape to main line + note line (keeps click-to-jump)
     if (isRevertSummary(raw)) {
       const [firstLine, ...rest] = raw.split(/\\r?\\n/);
       const notesIdx = rest.findIndex(l => /^Notes:/i.test(l.trim()));
@@ -461,6 +460,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     runOne.textContent = "▷";
     runOne.addEventListener("click", (e) => {
       e.stopPropagation();
+      const key = planKeyOf(planObj);
       if (key) pendingRunPlanKey = key; // remember which plan we asked to run
       vscode.postMessage({ type: "run-plan", plan: planObj });
     });
@@ -472,6 +472,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     revertOne.textContent = "↩︎";
     revertOne.addEventListener("click", (e) => {
       e.stopPropagation();
+      const key = planKeyOf(planObj);
       if (key) pendingRevertPlanKey = key;
       vscode.postMessage({ type: "revert-plan", plan: planObj });
     });
@@ -513,32 +514,29 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       const label = fromHistory ? "📝 Plan (from history)" : "📝 Plan ready";
       addPlanCard(maybePlan, label);
       if (!fromHistory) {
-        // If this plan was freshly generated (not history), remember; useful for autorun
+        // Freshly generated plan -> remember to pair with future run summaries
         lastGeneratedPlanKey = key;
       }
-      // Every time a new plan appears, revert buttons may change (if lastExecuted is elsewhere)
       updateRevertButtons();
       return;
     }
 
-    // Decide if this is an execution or revert summary; if yes, make it clickable to last executed key
+    // Execution summary cards: clickable -> jump to executed plan
     if (isExecutionSummary(text)) {
-      // Link strategy: prefer a user-initiated pending run, else fallback to last generated plan
+      // Prefer the exact user-initiated run; else link to the last generated/known executed plan
       const linkKey = pendingRunPlanKey || lastGeneratedPlanKey || lastExecutedPlanKey;
-      // Update authoritative pointer: this info card indicates a run just completed
       if (linkKey) {
-        lastExecutedPlanKey = linkKey;
-        pendingRunPlanKey = null; // consume
+        lastExecutedPlanKey = linkKey; // authoritative
+        pendingRunPlanKey = null;      // consume
         updateRevertButtons();
       }
       addInfoCard(text, linkKey || null);
-      // Auto focus briefly to reinforce association
       if (linkKey) setTimeout(() => focusPlanByKey(linkKey), 150);
       return;
     }
 
+    // Revert summary cards: clickable -> jump to reverted plan
     if (isRevertSummary(text)) {
-      // Link to the plan we just requested to revert; fall back to lastExecuted
       const linkKey = pendingRevertPlanKey || lastExecutedPlanKey;
       pendingRevertPlanKey = null;
       addInfoCard(text, linkKey || null);
@@ -594,10 +592,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       sendPrompt();
     }
   });
-  runBtn.addEventListener("click", ()=> vscode.postMessage({ type: "run" }));
+  // Topbar RUN removed
   repairBtn.addEventListener("click", ()=> vscode.postMessage({ type: "repair" }));
   settingsBtn.addEventListener("click", ()=> vscode.postMessage({ type: "open-settings" }));
-  clearBtn.addEventListener("click", ()=> {
+  newChatBtn.addEventListener("click", ()=> {
     clearThreadUI();
     vscode.postMessage({ type: "clear-history" });
   });
@@ -609,29 +607,49 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       // Status cards aren't linked to a plan
       addInfoCard(msg.message, null);
     } else if (msg?.type === "history") {
-      // Reset then render; dedupe identical plan JSONs
+      // Reset then render; dedupe identical plan JSONs, BUT preserve quote links.
       clearThreadUI();
       const seenPlanKeys = new Set();
+      /** Tracks the most recent plan key we encountered while replaying history. */
+      let histCurrentPlanKey = null;
+
       for (const h of msg.history) {
         if (h.role === "model") {
           const planObj = tryParsePlan(h.text);
           if (planObj) {
             const key = planKeyOf(planObj);
+            // Update the "current plan" pointer BEFORE potentially skipping for dedupe,
+            // so summaries following this still link to the correct (first) card instance.
+            histCurrentPlanKey = key;
+
             if (key) {
-              if (seenPlanKeys.has(key)) continue;
-              seenPlanKeys.add(key);
+              if (seenPlanKeys.has(key)) {
+                // Already rendered an identical plan earlier — keep it deduped.
+                // Still keep histCurrentPlanKey so following summaries link correctly.
+              } else {
+                seenPlanKeys.add(key);
+                renderModelMessage(h.text, { fromHistory: true });
+              }
+            } else {
+              renderModelMessage(h.text, { fromHistory: true });
             }
-            renderModelMessage(h.text, { fromHistory: true });
             continue;
           }
-          // For history info cards we cannot reliably infer which plan they belong to;
-          // render non-clickable.
-          addInfoCard(stripFileTree(h.text), null);
+
+          // Not a plan. If it's an execution or revert summary, link it to the most recent plan.
+          const textStripped = stripFileTree(h.text);
+          if (isExecutionSummary(textStripped) || isRevertSummary(textStripped)) {
+            addInfoCard(textStripped, histCurrentPlanKey);
+          } else {
+            // Other info from history: render non-clickable.
+            addInfoCard(textStripped, null);
+          }
         } else {
           addBubble("user", h.text);
         }
       }
-      // After restoring history, we don't know lastExecutedPlanKey; keep revert disabled.
+
+      // After restoring history, we still keep revert disabled until a new run happens now.
       updateRevertButtons();
     } else if (msg?.type === "model") {
       renderModelMessage(msg.text, { fromHistory: false });
