@@ -106,6 +106,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     --bubble-model: var(--vscode-editorWidget-background);
     --card-bg: var(--vscode-editorWidget-background);
     --accent: var(--vscode-textLink-foreground);
+    --highlight: var(--vscode-focusBorder);
   }
   html,body{height:100%}
   body{
@@ -140,7 +141,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   .scroll{ overflow:auto; padding:10px; }
   .thread{ max-width: 980px; margin: 0 auto; display:flex; flex-direction:column; gap:8px; }
 
-  /* Compact info/status card */
+  /* Compact info/status card (clickable when linked) */
   .info{
     align-self:center;
     max-width: 92%;
@@ -154,7 +155,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     line-height: 1.35;
     white-space: pre-wrap;
     word-break: break-word;
+    transition: border-color .15s ease, background .15s ease, transform .06s ease;
   }
+  .info.linked{ cursor: pointer; }
+  .info.linked:hover{ border-color: var(--link); transform: translateY(-1px); }
   .info .note{
     display:block;
     margin-top:4px;
@@ -192,13 +196,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     line-height: 1.45;
   }
   .card.model { align-self: flex-start; }
-
   .card-head{
     display:flex; align-items:center; justify-content: space-between; gap: 10px;
     margin-bottom:6px;
   }
   .card-title{ font-weight:600; font-size:12.5px; }
-
   .card-actions{ display:flex; align-items:center; gap:6px; }
   .icon-btn{
     width:28px; height:28px;
@@ -209,10 +211,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     color: var(--text);
     cursor: pointer;
     font-size: 12px; line-height: 1;
-    transition: transform .06s ease, background .15s ease, border-color .15s ease;
+    transition: transform .06s ease, background .15s ease, border-color .15s ease, color .15s ease, opacity .15s ease;
   }
   .icon-btn:hover{ border-color: var(--focus); color: var(--accent); transform: translateY(-1px); }
   .icon-btn:active{ transform: translateY(0); }
+  .icon-btn[disabled]{ opacity: .5; cursor: not-allowed; transform:none; }
 
   /* Code block */
   pre.code{
@@ -233,7 +236,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     font-size: 13px;
   }
 
-  /* Composer — one-line initial height, auto-grow up to a limit */
+  /* Composer */
   .composer{ border-top:1px solid var(--border); background:var(--bg); padding: 10px; }
   .composer-inner{ max-width: 980px; margin: 0 auto; position: relative; }
   .field{
@@ -248,7 +251,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     background:transparent; color:inherit;
     border:none; outline:none; resize:none;
     padding: 8px 10px;
-    height: calc(1.45em + 16px);   /* one line + vertical padding */
+    height: calc(1.45em + 16px);
     min-height: calc(1.45em + 16px);
     max-height: 220px;
     line-height: 1.45;
@@ -266,6 +269,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
   .send:hover{ background: var(--btn-hover); transform: translateY(-1px); }
   .send:active{ transform: translateY(0); }
+
+  /* Highlight for linked plan */
+  .highlight-plan {
+    outline: 2px solid var(--highlight);
+    outline-offset: 2px;
+    border-color: var(--highlight) !important;
+    transition: outline-color .15s ease, border-color .15s ease;
+  }
 </style>
 </head>
 <body>
@@ -305,6 +316,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   const settingsBtn = $("#settings");
   const clearBtn = $("#clear");
 
+  // ---- Plan tracking state ----
+  /** @type {Map<string, HTMLElement>} */
+  const planCards = new Map(); // planKey -> card element
+  /** @type {string|null} */ let lastGeneratedPlanKey = null; // newest rendered plan (non-history)
+  /** @type {string|null} */ let pendingRunPlanKey = null;    // set when user clicks "Run this plan"
+  /** @type {string|null} */ let pendingRevertPlanKey = null; // set when user clicks "Revert this plan"
+  /** @type {string|null} */ let lastExecutedPlanKey = null;  // authoritative last executed plan
+
   function scrollToBottom(){ body.scrollTop = body.scrollHeight; }
 
   // ------- Helpers -------
@@ -331,23 +350,60 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     return null;
   }
 
+  function planKeyOf(obj){ try { return JSON.stringify(obj); } catch { return null; } }
+
   function isExecutionSummary(text){
     return /▶️\\s*Executed\\s+\\d+\\s+steps/i.test(text) || /\\bExecuted\\s+\\d+\\s+steps\\b/i.test(text);
   }
 
   function isRevertSummary(text){
-    return /↩️\\s*Reverted\\s+\\d+\\s+file(?:\\(s\\))?/i.test(text);
+    return /↩️\\s*Reverted\\s+\\d+\\s+file/i.test(text);
+  }
+
+  function setOps({running, canRepair}) {
+    runBtn.disabled = running;
+    repairBtn.disabled = running || !canRepair;
+  }
+
+  function ensureEmptyRemoved(){
+    if (empty) { empty.remove(); empty = null; }
+  }
+
+  // ---- Revert button enable/disable based on lastExecutedPlanKey ----
+  function updateRevertButtons(){
+    for (const [key, card] of planCards.entries()) {
+      const revertBtn = card.querySelector('.icon-btn[data-role="revert"]');
+      if (!revertBtn) continue;
+      if (lastExecutedPlanKey && key === lastExecutedPlanKey) {
+        revertBtn.removeAttribute("disabled");
+        revertBtn.removeAttribute("title");
+      } else {
+        revertBtn.setAttribute("disabled", "true");
+        revertBtn.setAttribute("title", "Only the last executed plan can be reverted.");
+      }
+    }
+  }
+
+  // ---- Highlight + scroll to plan ----
+  function focusPlanByKey(key){
+    if (!key) return;
+    const card = planCards.get(key);
+    if (!card) return;
+    card.scrollIntoView({ behavior: "smooth", block: "center" });
+    card.classList.add("highlight-plan");
+    setTimeout(()=> card.classList.remove("highlight-plan"), 1800);
   }
 
   // ------- UI adders -------
-  function addInfoCard(raw){
+  function addInfoCard(raw, linkKey = null){
+    // If revert summary, reshape to main line + note line
     if (isRevertSummary(raw)) {
       const [firstLine, ...rest] = raw.split(/\\r?\\n/);
       const notesIdx = rest.findIndex(l => /^Notes:/i.test(l.trim()));
       const noteLine = notesIdx >= 0 ? rest[notesIdx].replace(/^Notes:\\s*/i, "").trim() : "";
-      if (empty) empty.remove();
+      ensureEmptyRemoved();
       const el = document.createElement("div");
-      el.className = "info";
+      el.className = "info" + (linkKey ? " linked" : "");
       const main = document.createElement("div");
       main.textContent = firstLine;
       el.appendChild(main);
@@ -357,23 +413,37 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         note.textContent = "Notes: " + noteLine;
         el.appendChild(note);
       }
+      if (linkKey) {
+        el.title = "Jump to plan";
+        el.addEventListener("click", () => focusPlanByKey(linkKey));
+      }
       thread.appendChild(el);
       scrollToBottom();
       return;
     }
+
     const text = stripFileTree(raw);
-    if (empty) empty.remove();
+    ensureEmptyRemoved();
     const el = document.createElement("div");
-    el.className = "info";
+    el.className = "info" + (linkKey ? " linked" : "");
     el.innerText = text;
+    if (linkKey) {
+      el.title = "Jump to plan";
+      el.addEventListener("click", () => focusPlanByKey(linkKey));
+    }
     thread.appendChild(el);
     scrollToBottom();
   }
 
   function addPlanCard(planObj, title = "📝 Generated Plan"){
-    if (empty) empty.remove();
+    ensureEmptyRemoved();
     const wrapper = document.createElement("div");
     wrapper.className = "card model";
+    const key = planKeyOf(planObj);
+    if (key) {
+      wrapper.dataset.planKey = key;
+      planCards.set(key, wrapper);
+    }
 
     const head = document.createElement("div");
     head.className = "card-head";
@@ -391,15 +461,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     runOne.textContent = "▷";
     runOne.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (key) pendingRunPlanKey = key; // remember which plan we asked to run
       vscode.postMessage({ type: "run-plan", plan: planObj });
     });
 
     const revertOne = document.createElement("button");
     revertOne.className = "icon-btn";
+    revertOne.setAttribute("data-role", "revert");
     revertOne.title = "Revert this plan";
     revertOne.textContent = "↩︎";
     revertOne.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (key) pendingRevertPlanKey = key;
       vscode.postMessage({ type: "revert-plan", plan: planObj });
     });
 
@@ -416,12 +489,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     wrapper.appendChild(pre);
     thread.appendChild(wrapper);
     scrollToBottom();
+
+    // On every card render, refresh revert button states
+    updateRevertButtons();
   }
 
-  function addStatus(text){ addInfoCard(text); }
-
   function addBubble(role, text){
-    if (empty) empty.remove();
+    ensureEmptyRemoved();
     const row = document.createElement("div");
     row.className = "row " + (role === "model" ? "model" : "user");
     const bubble = document.createElement("div");
@@ -432,22 +506,46 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     scrollToBottom();
   }
 
-  function setOps({running, canRepair}) {
-    runBtn.disabled = running;
-    repairBtn.disabled = running || !canRepair;
-  }
-
   function renderModelMessage(text, {fromHistory} = {fromHistory:false}){
     const maybePlan = tryParsePlan(text);
     if (maybePlan) {
+      const key = planKeyOf(maybePlan);
       const label = fromHistory ? "📝 Plan (from history)" : "📝 Plan ready";
       addPlanCard(maybePlan, label);
+      if (!fromHistory) {
+        // If this plan was freshly generated (not history), remember; useful for autorun
+        lastGeneratedPlanKey = key;
+      }
+      // Every time a new plan appears, revert buttons may change (if lastExecuted is elsewhere)
+      updateRevertButtons();
       return;
     }
-    if (isExecutionSummary(text) || isRevertSummary(text)) {
-      addInfoCard(text);
+
+    // Decide if this is an execution or revert summary; if yes, make it clickable to last executed key
+    if (isExecutionSummary(text)) {
+      // Link strategy: prefer a user-initiated pending run, else fallback to last generated plan
+      const linkKey = pendingRunPlanKey || lastGeneratedPlanKey || lastExecutedPlanKey;
+      // Update authoritative pointer: this info card indicates a run just completed
+      if (linkKey) {
+        lastExecutedPlanKey = linkKey;
+        pendingRunPlanKey = null; // consume
+        updateRevertButtons();
+      }
+      addInfoCard(text, linkKey || null);
+      // Auto focus briefly to reinforce association
+      if (linkKey) setTimeout(() => focusPlanByKey(linkKey), 150);
       return;
     }
+
+    if (isRevertSummary(text)) {
+      // Link to the plan we just requested to revert; fall back to lastExecuted
+      const linkKey = pendingRevertPlanKey || lastExecutedPlanKey;
+      pendingRevertPlanKey = null;
+      addInfoCard(text, linkKey || null);
+      if (linkKey) setTimeout(() => focusPlanByKey(linkKey), 150);
+      return;
+    }
+
     addBubble("model", stripFileTree(text));
   }
 
@@ -478,6 +576,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     ph.textContent = "Ask about your code. Responses may be inaccurate.";
     thread.appendChild(ph);
     empty = ph;
+
+    // Reset local UI-only state
+    planCards.clear();
+    lastGeneratedPlanKey = null;
+    pendingRunPlanKey = null;
+    pendingRevertPlanKey = null;
+    lastExecutedPlanKey = null;
     scrollToBottom();
   }
 
@@ -501,7 +606,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   window.addEventListener("message", (event) => {
     const msg = event.data;
     if (msg?.type === "status") {
-      addStatus(msg.message);
+      // Status cards aren't linked to a plan
+      addInfoCard(msg.message, null);
     } else if (msg?.type === "history") {
       // Reset then render; dedupe identical plan JSONs
       clearThreadUI();
@@ -510,17 +616,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         if (h.role === "model") {
           const planObj = tryParsePlan(h.text);
           if (planObj) {
-            const key = JSON.stringify(planObj);
-            if (seenPlanKeys.has(key)) continue;
-            seenPlanKeys.add(key);
+            const key = planKeyOf(planObj);
+            if (key) {
+              if (seenPlanKeys.has(key)) continue;
+              seenPlanKeys.add(key);
+            }
             renderModelMessage(h.text, { fromHistory: true });
             continue;
           }
-          renderModelMessage(h.text, { fromHistory: true });
+          // For history info cards we cannot reliably infer which plan they belong to;
+          // render non-clickable.
+          addInfoCard(stripFileTree(h.text), null);
         } else {
           addBubble("user", h.text);
         }
       }
+      // After restoring history, we don't know lastExecutedPlanKey; keep revert disabled.
+      updateRevertButtons();
     } else if (msg?.type === "model") {
       renderModelMessage(msg.text, { fromHistory: false });
     } else if (msg?.type === "error") {
